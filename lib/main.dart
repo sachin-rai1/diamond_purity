@@ -1,7 +1,6 @@
+import 'package:diamond_purity/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-
-import 'homePage.dart';
 
 void main() {
   runApp(const MyApp());
@@ -9,8 +8,6 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
@@ -19,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: const HomePage()
+      home:  const LoginScreen()
     );
   }
 }
