@@ -34,8 +34,7 @@ class _HomePageState extends State<HomePage> {
   upload(File imageFile) async {
     isLoading.value = true;
     var stream = http.ByteStream(DelegatingStream.typed(imageFile.openRead()));
-    var length = await imageFile.length();
-    var uploadURL = "http://ec2-34-196-165-184.compute-1.amazonaws.com/predict";
+    var length = await imageFile.length();    
     var uri = Uri.parse(uploadURL);
     var request = http.MultipartRequest("POST", uri);
     var multipartFile =
