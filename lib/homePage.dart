@@ -4,12 +4,13 @@ import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:get/get.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:async/async.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:image/image.dart' as img;
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -29,38 +30,113 @@ class _HomePageState extends State<HomePage> {
 
   var id = 0.obs;
   var statusCode;
+
   TextEditingController runNo = TextEditingController();
+  var croppedFile;
+  File? resizedFile;
+
+  Future<void> hasNetwork() async {
+    try {
+      final result = await InternetAddress.lookup('google.com');
+      if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
+        _cropImage();
+      }
+    } on SocketException catch (e) {
+      print(e);
+      setState(() {
+        data = null;
+      });
+      Get.showSnackbar(GetSnackBar(
+        backgroundColor: Colors.red,
+        message: "Please try after some time",
+        title: "No Internet Connection",
+        snackPosition: SnackPosition.TOP,
+        duration: Duration(milliseconds: 2000),
+      ));
+    }
+  }
+
+  Future<void> _cropImage() async {
+    croppedFile = await ImageCropper().cropImage(
+      sourcePath: _image!.path,
+      aspectRatioPresets: [
+        CropAspectRatioPreset.square,
+        CropAspectRatioPreset.ratio3x2,
+        CropAspectRatioPreset.original,
+        CropAspectRatioPreset.ratio4x3,
+        CropAspectRatioPreset.ratio16x9
+      ],
+      uiSettings: [
+        AndroidUiSettings(
+            toolbarTitle: 'Cropper',
+            toolbarColor: Colors.deepOrange,
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false),
+        IOSUiSettings(
+          title: 'Cropper',
+        ),
+        WebUiSettings(
+          context: context,
+        ),
+      ],
+    );
+    final bytes = await croppedFile?.readAsBytes();
+    final resizedImage = img.decodeImage(bytes!);
+    final resized = img.copyResize(resizedImage!, width: 512, height: 512);
+    final tempDir = await getTemporaryDirectory();
+
+    setState(() {
+      resizedFile = File(
+          '${tempDir.path}/resized${DateTime.now().microsecondsSinceEpoch}.jpeg')
+        ..writeAsBytesSync(img.encodeJpg(resized));
+    });
+    upload(resizedFile!);
+  }
 
   upload(File imageFile) async {
-    isLoading.value = true;
-    var stream = http.ByteStream(DelegatingStream.typed(imageFile.openRead()));
-    var length = await imageFile.length();
-    var uploadURL = "http://ec2-34-196-165-184.compute-1.amazonaws.com/predict";
-    var uri = Uri.parse(uploadURL);
-    var request = http.MultipartRequest("POST", uri);
-    var multipartFile =
-        http.MultipartFile('file', stream, length, filename: (imageFile.path));
-    request.files.add(multipartFile);
-    var response = await request.send();
-    statusCode = response.statusCode.toString();
-    if (response.statusCode == 200) {
-      response.stream
-          .transform(utf8.decoder)
-          .transform(json.decoder)
-          .listen((value) {
-        print("Value is :  $value");
-        data = value;
-        setState(() {
-          classValue = data["class"].toString();
-          confidence = data["confidence"].toString();
+    try {
+      isLoading.value = true;
+      final bytes = await imageFile.readAsBytes();
+      final resizedImage = img.decodeImage(bytes);
+      final resized = img.copyResize(resizedImage!, width: 512, height: 512);
+      final tempDir = await getTemporaryDirectory();
+      final resizedFile = File('${tempDir.path}/resized.jpeg')
+        ..writeAsBytesSync(img.encodeJpg(resized));
+
+      var stream =
+          http.ByteStream(DelegatingStream.typed(resizedFile.openRead()));
+      var length = await resizedFile.length();
+      var uri = Uri.parse(uploadURL);
+      var request = http.MultipartRequest("POST", uri);
+      var multipartFile = http.MultipartFile('file', stream, length,
+          filename: (imageFile.path));
+      request.files.add(multipartFile);
+      var response = await request.send();
+      statusCode = response.statusCode.toString();
+      if (response.statusCode == 200) {
+        response.stream.transform(utf8.decoder).transform(json.decoder).listen((value) {
+          print("Value is :  $value");
+          data = value;
+          setState(() {
+            classValue = data["class"].toString();
+            confidence = data["confidence"].toString();
+          });
         });
+      } else {
+        setState(() {
+          isLoading.value = false;
+        });
+      }
+    } finally {
+      setState(() {
+        isLoading.value = false;
       });
     }
-    isLoading.value = false;
   }
 
   savePdf() async {
-    if (_image == null) {
+    if (resizedFile == null) {
       Get.showSnackbar(GetSnackBar(
         message: "No Image Selected",
         title: "Select Image",
@@ -87,7 +163,7 @@ class _HomePageState extends State<HomePage> {
                     style: pw.TextStyle(
                         fontSize: 20, fontWeight: pw.FontWeight.bold)),
                 pw.Image(
-                  pw.MemoryImage(_image!.readAsBytesSync()),
+                  pw.MemoryImage(resizedFile!.readAsBytesSync()),
                   height: h / 1.5,
                 ),
                 pw.Text(
@@ -228,7 +304,7 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(
                     height: 10,
                   ),
-                  (_image == null)
+                  (resizedFile == null)
                       ? Container(
                           decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.2),
@@ -239,7 +315,7 @@ class _HomePageState extends State<HomePage> {
                       : ClipRRect(
                           // borderRadius: BorderRadius.circular(h/2),
                           child: Image.file(
-                          _image!,
+                          resizedFile!,
                           width: w,
                           fit: BoxFit.fill,
                         )),
@@ -247,49 +323,43 @@ class _HomePageState extends State<HomePage> {
                     height: 10,
                   ),
                   Obx(
-                    () => Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: (isLoading.value == true)
-                          ? const Center(child: CircularProgressIndicator())
-                          : Center(
-                              child: Text(
-                              "Class :- ${classValue ?? ""}",
-                              style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold),
-                            )),
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 10,
-                  ),
-                  Obx(
-                    () => Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: (isLoading.value == true)
-                          ? const Center(child: CircularProgressIndicator())
-                          : Center(
-                              child: Text(
-                              "Confidence :- ${confidence ?? ""}",
-                              style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold),
-                            )),
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 10,
-                  ),
-                  Obx(
-                    () => Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: (isLoading.value == true)
-                          ? const Center(child: CircularProgressIndicator())
-                          : Center(
-                              child: Text(
-                              "Status Code:- ${statusCode ?? ""}",
-                              style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.bold),
-                            )),
-                    ),
+                    () => (isLoading.value == true)
+                        ? const Center(child: CircularProgressIndicator())
+                        : Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Center(
+                                    child: Text(
+                                  "Class :- ${classValue ?? ""}",
+                                  style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold),
+                                )),
+                              ),
+                              const SizedBox(
+                                height: 10,
+                              ),
+                              Center(
+                                  child: Text(
+                                "Confidence :- ${confidence ?? ""}",
+                                style: const TextStyle(
+                                    fontSize: 20, fontWeight: FontWeight.bold),
+                              )),
+                              const SizedBox(
+                                height: 10,
+                              ),
+                              Center(
+                                  child: (statusCode == 200)
+                                      ? Container()
+                                      : Text(
+                                          "Status Code:- ${statusCode ?? ""}",
+                                          style: const TextStyle(
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold),
+                                        ))
+                            ],
+                          ),
                   ),
                   const SizedBox(
                     height: 10,
@@ -308,7 +378,8 @@ class _HomePageState extends State<HomePage> {
                             setState(() {
                               _image = File(image!.path);
                             });
-                            upload(_image!);
+                            // hasNetwork();
+                            hasNetwork();
                             Get.back();
                           },
                           style: ElevatedButton.styleFrom(
@@ -323,14 +394,16 @@ class _HomePageState extends State<HomePage> {
                       ElevatedButton(
                           onPressed: () async {
                             final ImagePicker _picker = ImagePicker();
-                            final XFile? image = await _picker.pickImage(source: ImageSource.camera);
+                            final XFile? image = await _picker.pickImage(
+                                source: ImageSource.camera);
                             log('image path : ${image?.path} -- MimeType : ${image?.mimeType}');
 
                             setState(() {
                               _image = File(image!.path);
                             });
                             // APIs.updateUserProfile(File(_image!));
-                            upload(_image!);
+                            // hasNetwork();
+                            hasNetwork();
                             Get.back();
                           },
                           style: ElevatedButton.styleFrom(
